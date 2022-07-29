@@ -1,10 +1,11 @@
 ---
 - name: "Install postgres"
   hosts: all 
+  become: true
 
-  vars:
-    ansible_connection: aws_ssm
-    ansible_aws_ssm_region: eu-west-2
+  #vars:
+    #ansible_connection: aws_ssm
+    #ansible_aws_ssm_region: eu-west-2
 
   tasks:
     - name: "Install postgresql"
