@@ -1,6 +1,8 @@
 ---
+- name: "Install postgres"
+  hosts: all 
 
-- vars:
+  vars:
     ansible_connection: aws_ssm
     ansible_aws_ssm_region: eu-west-2
 
