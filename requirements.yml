@@ -1,2 +1,3 @@
 collections:
-- community.aws
+- name: community.aws.aws_ssm
+
