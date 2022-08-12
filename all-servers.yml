@@ -4,8 +4,8 @@
   become: true
 
   tasks:
-    - name: "Install mailx"
-      yum:
+    - name: "Install cowsay"
+      apt:
         name: cowsay
         state: present
 

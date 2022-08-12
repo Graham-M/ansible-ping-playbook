@@ -5,7 +5,7 @@
 
   tasks:
     - name: "Install postgres client"
-      yum:
+      apt:
         name: postgresql
         state: present
 
