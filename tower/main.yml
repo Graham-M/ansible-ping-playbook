@@ -1,0 +1,153 @@
+---
+
+- name: Install required packages
+  become: true
+  community.general.snap:
+    classic: yes
+    name:
+      - microk8s
+      - helm
+      - kubectl
+  tags:
+     - k8s
+
+- name: Install required tools
+  become: true
+  apt:
+     state: latest
+     name: "{{ item }}"
+     update_cache: yes
+  loop:
+     - "python3-kubernetes"
+     - "net-tools"
+  tags:
+     - k8s
+
+- name: "See if microk8s dns is enabled"
+  shell: "microk8s status -a dns"
+  register: microk8s_status_dns
+  changed_when: false
+  tags:
+     - k8s
+
+- name: "Enable microk8s dns"
+  shell: "microk8s enable dns"
+  when: microk8s_status_dns.stdout == 'disabled'
+  tags:
+     - k8s
+
+- name: "Configure kubectl"
+  become: true
+  shell: |
+    cd $HOME
+    mkdir .kube
+    cd .kube
+    microk8s config > config
+  args:
+    creates: /root/.kube/config
+  tags:
+     - k8s
+
+- name: "Create namespace"
+  become: true
+  kubernetes.core.k8s:
+    name: "{{ awx_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+  tags:
+     - k8s
+
+- name: Retrieve DB Admin user details
+  set_fact: awx_db_admin_creds="{{ lookup('amazon.aws.aws_secret', awx_db_admin_secret_path, region=aws_region) | from_json }}"
+
+- name: Retrieve AWX Admin user details
+  set_fact: awx_admin_user_creds="{{ lookup('amazon.aws.aws_secret', awx_admin_user_secret_path, region=aws_region) | from_json }}"
+
+- name: Retrieve AWX Secret Key
+  set_fact: awx_secret_key="{{ lookup('amazon.aws.aws_secret', awx_secret_key_secret_path, region=aws_region) | from_json }}"
+
+- name: debug
+  debug:
+    msg: "{{ awx_admin_user_creds }}"
+
+- name: "Add DB secret"
+  become: true
+  kubernetes.core.k8s:
+    state: present
+    api_version: v1
+    definition:
+      kind: Secret
+      metadata:
+        name: "postgres-configuration"
+        namespace: "{{ awx_namespace }}"
+      stringData:
+        host: "{{ awx_db_admin_creds.db_host }}"
+        port: "5432"
+        database: "awx"
+        username: "{{ awx_db_admin_creds.db_user }}"
+        password: "{{ awx_db_admin_creds.db_pass }}"
+        sslmode: prefer
+        type: unmanaged
+      type: Opaque
+
+- name: "Set admin password"
+  become: true
+  kubernetes.core.k8s:
+    state: present
+    api_version: v1
+    definition:
+      kind: Secret
+      metadata:
+        name: "awx-admin-password"
+        namespace: "{{ awx_namespace }}"
+      stringData:
+        password: "{{ awx_admin_user_creds.pass }}"
+      type: Opaque
+  
+- name: "Create AWX secret key"
+  become: true
+  kubernetes.core.k8s:
+    state: present
+    api_version: v1
+    definition:
+      kind: Secret
+      metadata:
+        name: "awx-secret-key"
+        namespace: "{{ awx_namespace }}"
+      stringData:
+        secret_key: "{{ awx_secret_key.key }}"
+        
+- name: "Add awx helm repo"
+  become: true
+  kubernetes.core.helm_repository:
+    name: "awx-operator"
+    repo_url: "https://ansible.github.io/awx-operator/"
+
+- name: "Add AWX helm chart"
+  become: true
+  kubernetes.core.helm:
+    name: "awx-operator"
+    chart_ref: "awx-operator/awx-operator"
+    release_namespace: "{{ awx_namespace }}"
+    force: True
+    wait: True
+    update_repo_cache: True
+
+- name: "Update AWX config"
+  become: true
+  kubernetes.core.k8s:
+    state: present
+    api_version: awx.ansible.com/v1beta1
+    definition:
+      kind: AWX
+      metadata:
+        name: "awx"
+        namespace: "{{ awx_namespace }}"
+      spec:
+        service_type: "NodePort"
+        nodeport_port: 30080
+        ingress_type: none
+        postgres_configuration_secret: "postgres-configuration"
+        secret_key_secret: "awx-secret-key"
+
